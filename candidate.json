@@ -1,0 +1,97 @@
+{
+  "name": "Mohd Jawwad Ahmed",
+  "title": "Backend Software Engineer & Aspiring ai Engineer",
+  "email": "mohdjawwad73@gmail.com",
+  "phone": "+91 8978463930",
+  "location": "Hyderabad, India",
+  "linkedin": "https://linkedin.com/in/mohd-jawwad",
+  "github": "https://github.com/Jawadoooooo",
+  "education": [
+    {
+      "degree": "B.Tech in Electronics and Communication Engineering",
+      "institution": "Methodist College of Engineering and Technology",
+      "year": "2023–2027",
+      "cgpa": "7.9"
+    }
+  ],
+  "skills": {
+    "languages": ["Python", "SQL", "C (Basic)", "C++ (Basic)"],
+    "backend_and_databases": [
+      "FastAPI",
+      "PostgreSQL",
+      "Redis",
+      "SQLModel",
+      "SQLAlchemy 2.0 (async)",
+      "asyncpg",
+      "Alembic",
+      "REST APIs"
+    ],
+    "authentication_and_security": [
+      "PyJWT",
+      "passlib/bcrypt",
+      "Password Hashing",
+      "Server-Side Token Blacklisting (JTI)"
+    ],
+    "embedded_and_iot": [
+      "ESP32",
+      "Arduino",
+      "I2C",
+      "OneWire",
+      "BLE GATT",
+      "Sensor Interfacing"
+    ],
+    "developer_tools": [
+      "Git",
+      "GitHub",
+      "Linux/Bash",
+      "Postman",
+      "Debugging",
+      "Technical Documentation"
+    ]
+  },
+  "projects": [
+    {
+      "name": "WorkQueue - Distributed Task Queue",
+      "description": "Asynchronous task queue where jobs submitted through FastAPI endpoints are queued in Redis and consumed by background workers using BRPOP. Features process-level parallelism via ProcessPoolExecutor, automatic retries with exponential backoff, Dead Letter Queue (DLQ), Pydantic validation, and worker heartbeats.",
+      "tech_stack": ["FastAPI", "Redis", "Python", "Pydantic", "ProcessPoolExecutor"],
+      "github_link": "https://github.com/Jawadoooooo/taskqueue"
+    },
+    {
+      "name": "URL Shortener API",
+      "description": "RESTful URL Shortener with JWT auth, password hashing, and Redis token blocklist for server-side logout. Features async PostgreSQL database queries, 1-hour TTL Redis redirect lookup caching, collision-resistant short code generation, ownership access control, visit tracking, and Alembic database migrations.",
+      "tech_stack": ["FastAPI", "PostgreSQL", "SQLModel", "Redis", "PyJWT", "bcrypt", "Alembic"],
+      "github_link": "https://github.com/Jawadoooooo/URL-SHORTENER"
+    },
+    {
+      "name": "AI-Based Health Emergency Detection System",
+      "description": "Wearable health monitoring device using ESP32 to track heart rate, SpO2, body temperature, and real-time motion. Features fall-detection, emergency alerts, and a machine learning classification model trained on accelerometer data, streaming metrics wirelessly over BLE GATT.",
+      "tech_stack": ["ESP32", "MAX30102", "MPU6050", "DS18B20", "Python", "Scikit-learn", "BLE GATT", "I2C", "OneWire"],
+      "github_link": "https://github.com/Jawadoooooo"
+    }
+  ],
+  "experience": [
+    {
+      "role": "Embedded Systems Intern",
+      "company": "Pragyatmika - Centre of Excellence for IoT, MCET",
+      "period": "May 2026",
+      "location": "Hyderabad, India",
+      "highlights": [
+        "Built and tested an IoT temperature monitoring system on ESP32 handling end-to-end sensor data acquisition and wireless transmission.",
+        "Resolved hardware and software integration issues through sensor calibration, circuit troubleshooting, and firmware updates.",
+        "Configured Bluetooth Low Energy (BLE) GATT services to stream live sensor data to client applications."
+      ]
+    }
+  ],
+  "certifications": [
+    {
+      "name": "ANVESHANA'25 - Two-Day Hands-on Workshop on Arduino, ESP32 and IoT",
+      "issuer": "IEEE Signal Processing Society & IEEE OUCE, Osmania University",
+      "date": "2025"
+    },
+    {
+      "name": "Exploring the Art of PCB Design",
+      "issuer": "Electronics Club & IETE Student Forum, Osmania University",
+      "date": "Oct 2025"
+    }
+  ]
+}
