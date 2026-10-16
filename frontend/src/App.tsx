@@ -1,39 +1,21 @@
-import { useEffect, useRef, useState } from "react";
-import type { FormEvent, KeyboardEvent } from "react";
-import {
-  ArrowUp,
-  BriefcaseBusiness,
-  CircleHelp,
-  Code2,
-  Menu,
-  MessageSquare,
-  Plus,
-  RotateCcw,
-  Sparkles,
-  UserRound,
-  X,
-} from "lucide-react";
-import { sendChatMessage } from "./api";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { ArrowDown, Loader2 } from "lucide-react";
+import { streamChatMessage } from "./api";
+import { KnomeLogo } from "./components/KnomeLogo";
+import { NeuralCanvas } from "./components/NeuralCanvas";
+import { EmptyState } from "./components/EmptyState";
+import { Sidebar } from "./components/Sidebar";
+import { TopNav } from "./components/TopNav";
+import { ChatMessageItem } from "./components/ChatMessageItem";
+import type { ChatMessage } from "./components/ChatMessageItem";
+import { ChatComposer } from "./components/ChatComposer";
 
-type ChatMessage = {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-};
-
-type Conversation = {
+interface Conversation {
   id: string;
   title: string;
   sessionId: string | null;
   messages: ChatMessage[];
-};
-
-const suggestions = [
-  { icon: Code2, text: "What projects has the candidate built?" },
-  { icon: BriefcaseBusiness, text: "Explain the WorkQueue project." },
-  { icon: Sparkles, text: "What technologies does the candidate use?" },
-  { icon: CircleHelp, text: "Tell me about the candidate's backend experience." },
-];
+}
 
 function makeConversation(): Conversation {
   return {
@@ -45,7 +27,12 @@ function makeConversation(): Conversation {
 }
 
 function makeMessage(role: ChatMessage["role"], content: string): ChatMessage {
-  return { id: crypto.randomUUID(), role, content };
+  return {
+    id: crypto.randomUUID(),
+    role,
+    content,
+    timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+  };
 }
 
 export default function App() {
@@ -55,274 +42,325 @@ export default function App() {
   const [activeId, setActiveId] = useState<string>("");
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
+  const [isStreamingTokens, setIsStreamingTokens] = useState(false);
   const [error, setError] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
+
+  // Keep track of the last submitted user prompt for retry
+  const [lastSubmittedPrompt, setLastSubmittedPrompt] = useState<string>("");
+
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const activeRequestRef = useRef(false);
+  const userScrolledUpRef = useRef(false);
 
+  // Keep activeId valid
   useEffect(() => {
     setActiveId((current) => current || conversations[0]?.id || "");
   }, [conversations]);
 
   const activeConversation =
-    conversations.find((conversation) => conversation.id === activeId) ??
-    conversations[0];
+    conversations.find((c) => c.id === activeId) ?? conversations[0];
   const messages = activeConversation?.messages ?? [];
   const hasMessages = messages.length > 0;
 
+  // Track user scroll position in conversation area
+  const handleScroll = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const isScrolledUp = distanceToBottom > 260;
+    userScrolledUpRef.current = isScrolledUp;
+    setShowScrollBottom(isScrolledUp && hasMessages);
+  };
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    bottomRef.current?.scrollIntoView({ behavior, block: "end" });
+  }, []);
+
+  // Auto-scroll when messages or loading changes ONLY IF user hasn't scrolled up
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, loading]);
+    if (!userScrolledUpRef.current) {
+      scrollToBottom();
+    }
+  }, [messages, loading, scrollToBottom]);
 
-  function updateConversation(
+  const updateConversation = (
     conversationId: string,
-    updater: (conversation: Conversation) => Conversation,
-  ) {
+    updater: (conv: Conversation) => Conversation,
+  ) => {
     setConversations((current) =>
-      current.map((conversation) =>
-        conversation.id === conversationId ? updater(conversation) : conversation,
-      ),
+      current.map((c) => (c.id === conversationId ? updater(c) : c)),
     );
-  }
+  };
 
-  function newChat() {
+  const newChat = () => {
     if (activeRequestRef.current) return;
     const conversation = makeConversation();
     setConversations((current) => [conversation, ...current]);
     setActiveId(conversation.id);
     setDraft("");
     setError("");
+    setIsStreamingTokens(false);
     setSidebarOpen(false);
-    textareaRef.current?.focus();
-  }
+    userScrolledUpRef.current = false;
+    setTimeout(() => {
+      textareaRef.current?.focus();
+    }, 50);
+  };
 
-  function selectConversation(id: string) {
+  const selectConversation = (id: string) => {
     if (activeRequestRef.current) return;
     setActiveId(id);
     setError("");
+    setIsStreamingTokens(false);
     setSidebarOpen(false);
-  }
+    userScrolledUpRef.current = false;
+  };
 
-  async function sendMessage(contentOverride?: string) {
+  const sendMessage = async (contentOverride?: string) => {
     const content = (contentOverride ?? draft).trim();
     if (!content || loading || !activeConversation || activeRequestRef.current) return;
 
     const conversationId = activeConversation.id;
     const isFirstMessage = activeConversation.messages.length === 0;
+
     activeRequestRef.current = true;
     setLoading(true);
+    setIsStreamingTokens(false);
     setError("");
     setDraft("");
+    setLastSubmittedPrompt(content);
+    userScrolledUpRef.current = false;
 
+    // Add user message to conversation
     const userMessage = makeMessage("user", content);
-    updateConversation(conversationId, (conversation) => ({
-      ...conversation,
+    updateConversation(conversationId, (conv) => ({
+      ...conv,
       title: isFirstMessage
-        ? content.length > 34
-          ? `${content.slice(0, 34)}…`
+        ? content.length > 36
+          ? `${content.slice(0, 36)}…`
           : content
-        : conversation.title,
-      messages: [...conversation.messages, userMessage],
+        : conv.title,
+      messages: [...conv.messages, userMessage],
     }));
 
-    try {
-      const result = await sendChatMessage({
-        message: content,
-        session_id: activeConversation.sessionId,
-      });
+    // Scroll to bottom as user message appears
+    setTimeout(() => scrollToBottom("smooth"), 40);
 
-      updateConversation(conversationId, (conversation) => ({
-        ...conversation,
-        sessionId: result.session_id,
-        messages: [...conversation.messages, makeMessage("assistant", result.reply)],
-      }));
+    const assistantMessageId = crypto.randomUUID();
+    let accumulatedContent = "";
+    let hasCreatedAssistantMessage = false;
+
+    try {
+      await streamChatMessage(
+        {
+          message: content,
+          session_id: activeConversation.sessionId,
+        },
+        {
+          onSession: (newSessionId) => {
+            updateConversation(conversationId, (conv) => ({
+              ...conv,
+              sessionId: newSessionId,
+            }));
+          },
+          onDelta: (delta) => {
+            accumulatedContent += delta;
+            if (!hasCreatedAssistantMessage) {
+              hasCreatedAssistantMessage = true;
+              setIsStreamingTokens(true);
+              updateConversation(conversationId, (conv) => ({
+                ...conv,
+                messages: [
+                  ...conv.messages,
+                  {
+                    id: assistantMessageId,
+                    role: "assistant",
+                    content: accumulatedContent,
+                    timestamp: new Date().toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    }),
+                  },
+                ],
+              }));
+            } else {
+              updateConversation(conversationId, (conv) => ({
+                ...conv,
+                messages: conv.messages.map((m) =>
+                  m.id === assistantMessageId
+                    ? { ...m, content: accumulatedContent }
+                    : m,
+                ),
+              }));
+            }
+
+            if (!userScrolledUpRef.current) {
+              scrollToBottom();
+            }
+          },
+          onDone: (finalSessionId) => {
+            updateConversation(conversationId, (conv) => ({
+              ...conv,
+              sessionId: finalSessionId || conv.sessionId,
+            }));
+          },
+          onError: (errMsg) => {
+            setError(errMsg);
+          },
+        },
+      );
     } catch (caught) {
       const message =
         caught instanceof Error
           ? caught.message
-          : "Something went wrong. Please try again.";
+          : "Communication failure with AI inference engine. Please retry.";
       setError(message);
-      setDraft(content);
     } finally {
       activeRequestRef.current = false;
       setLoading(false);
-      textareaRef.current?.focus();
+      setIsStreamingTokens(false);
+      setTimeout(() => {
+        textareaRef.current?.focus();
+      }, 50);
     }
-  }
+  };
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    void sendMessage();
-  }
-
-  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      void sendMessage();
+  const handleRetry = () => {
+    if (lastSubmittedPrompt && !loading) {
+      setError("");
+      void sendMessage(lastSubmittedPrompt);
     }
-  }
-
-  function renderContent(content: string) {
-    // Render plain text safely; React escapes HTML. Preserve line breaks.
-    return content;
-  }
+  };
 
   return (
-    <div className="app-shell">
-      {sidebarOpen && (
-        <button
-          aria-label="Close sidebar overlay"
-          className="sidebar-overlay"
-          onClick={() => setSidebarOpen(false)}
+    <div className="knome-shell">
+      {/* Left Navigation Sidebar */}
+      <Sidebar
+        conversations={conversations}
+        activeId={activeConversation?.id ?? ""}
+        onSelectConversation={selectConversation}
+        onNewChat={newChat}
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        disabled={loading}
+      />
+
+      {/* Main Intelligent Workspace */}
+      <main className="main-workspace">
+        <TopNav
+          onOpenSidebar={() => setSidebarOpen(true)}
+          sessionId={activeConversation?.sessionId ?? null}
         />
-      )}
 
-      <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
-        <div className="sidebar-top">
-          <div className="brand">
-            <div className="brand-mark"><Sparkles size={17} /></div>
-            <span>knome</span>
+        <div
+          ref={scrollContainerRef}
+          onScroll={handleScroll}
+          className={`workspace-scroll-viewport ${
+            hasMessages ? "viewport-has-chat" : "viewport-empty"
+          }`}
+        >
+          {/* Background Procedural Neural Canvas (Prominent in empty state, subtle ambient in active chat) */}
+          <div
+            className={`canvas-container ${
+              hasMessages ? "canvas-ambient" : "canvas-prominent"
+            }`}
+          >
+            <NeuralCanvas />
           </div>
-          <button className="icon-button mobile-close" aria-label="Close sidebar" onClick={() => setSidebarOpen(false)}>
-            <X size={18} />
-          </button>
-          <button className="new-chat-button" onClick={newChat}>
-            <Plus size={17} />
-            <span>New chat</span>
-            <span className="shortcut">⌘ K</span>
-          </button>
-        </div>
 
-        <div className="sidebar-section-label">YOUR CHATS</div>
-        <nav className="conversation-list" aria-label="Conversations">
-          {conversations.map((conversation) => (
-            <button
-              key={conversation.id}
-              className={`conversation-item ${conversation.id === activeConversation?.id ? "conversation-active" : ""}`}
-              onClick={() => selectConversation(conversation.id)}
-            >
-              <MessageSquare size={16} />
-              <span>{conversation.title}</span>
-            </button>
-          ))}
-        </nav>
+          <div className="reading-column">
+            {!hasMessages ? (
+              <EmptyState
+                onSelectSuggestion={(prompt) => void sendMessage(prompt)}
+                disabled={loading}
+              />
+            ) : (
+              <div className="messages-stream" role="log" aria-live="polite">
+                <div className="conversation-header-marker">
+                  <span className="marker-line" />
+                  <span className="marker-text">
+                    SESSION ESTABLISHED // PERSISTED CONVERSATION
+                  </span>
+                  <span className="marker-line" />
+                </div>
 
-        <div className="sidebar-bottom">
-          <div className="profile-card">
-            <div className="profile-avatar">P</div>
-            <div className="profile-copy">
-              <strong>AI Portfolio</strong>
-              <span>Recruiter assistant</span>
-            </div>
-            <span className="status-dot" title="Portfolio assistant" />
-          </div>
-          <div className="sidebar-footnote">A conversational view of my work.</div>
-        </div>
-      </aside>
-
-      <main className="main-panel">
-        <header className="topbar">
-          <div className="topbar-left">
-            <button className="icon-button mobile-menu" aria-label="Open sidebar" onClick={() => setSidebarOpen(true)}>
-              <Menu size={19} />
-            </button>
-            <span className="topbar-title">knome</span>
-            <span className="topbar-divider">/</span>
-            <span className="topbar-subtitle">AI portfolio assistant</span>
-          </div>
-          <div className="topbar-right">
-            <span className="online-indicator"><span /> Ready to chat</span>
-          </div>
-        </header>
-
-        <section className={`chat-scroll-area ${hasMessages ? "has-messages" : "welcome-mode"}`}>
-          {!hasMessages ? (
-            <div className="welcome-content">
-              <div className="welcome-icon"><Sparkles size={24} /></div>
-              <div className="eyebrow"><span /> YOUR NEXT CONVERSATION STARTS HERE</div>
-              <h1>Explore my <span>AI portfolio.</span></h1>
-              <p className="welcome-description">
-                Curious about my projects, skills, or how I build things?
-                <br className="desktop-break" /> Ask away — I'll help you explore.
-              </p>
-
-              <div className="suggestions-heading">START WITH A QUESTION</div>
-              <div className="suggestion-grid">
-                {suggestions.map(({ icon: Icon, text }) => (
-                  <button key={text} className="suggestion-card" onClick={() => void sendMessage(text)}>
-                    <span className="suggestion-icon"><Icon size={17} /></span>
-                    <span>{text}</span>
-                    <ArrowUp size={15} className="suggestion-arrow" />
-                  </button>
+                {messages.map((message) => (
+                  <ChatMessageItem key={message.id} message={message} />
                 ))}
-              </div>
-              <div className="welcome-note"><span className="note-sparkle">✳</span> Powered by AI · Built to make the details easier to explore</div>
-            </div>
-          ) : (
-            <div className="messages-container">
-              <div className="conversation-date">THIS CONVERSATION</div>
-              {messages.map((message) => (
-                <article key={message.id} className={`message-row message-${message.role}`}>
-                  <div className={`message-avatar avatar-${message.role}`}>
-                    {message.role === "assistant" ? <Sparkles size={17} /> : <UserRound size={17} />}
-                  </div>
-                  <div className="message-body">
-                    <div className="message-author">
-                      {message.role === "assistant" ? (
-                        <>knome <span className="message-author-badge">AI</span></>
-                      ) : "You"}
-                    </div>
-                    <div className="message-text">{renderContent(message.content)}</div>
-                  </div>
-                </article>
-              ))}
-              {loading && (
-                <article className="message-row message-assistant">
-                  <div className="message-avatar avatar-assistant"><Sparkles size={17} /></div>
-                  <div className="message-body">
-                    <div className="message-author">knome <span className="message-author-badge">AI</span></div>
-                    <div className="typing-indicator" aria-label="AI is responding"><span /><span /><span /></div>
-                  </div>
-                </article>
-              )}
-              <div ref={bottomRef} />
-            </div>
-          )}
-          {!hasMessages && loading && (
-            <div className="welcome-loading"><span /><span /><span /> Thinking...</div>
-          )}
-        </section>
 
-        <footer className="composer-area">
-          {error && (
-            <div className="error-banner" role="alert">
-              <span>{error}</span>
-              <button onClick={() => void sendMessage()} disabled={loading || !draft.trim()}>
-                <RotateCcw size={14} /> Retry
-              </button>
-            </div>
+                {/* Loading Generation Indicator while waiting for first chunk */}
+                {loading && !isStreamingTokens && (
+                  <div
+                    className="message-item assistant-message-item loading-skeleton-item"
+                    aria-label="Generating response"
+                  >
+                    <div className="assistant-message-container">
+                      <div className="assistant-header">
+                        <div className="assistant-identity">
+                          <div className="assistant-logo-wrapper">
+                            <KnomeLogo size={18} />
+                          </div>
+                          <div className="assistant-name-group">
+                            <span className="assistant-name">knome</span>
+                            <span className="assistant-badge">PROCESSING</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="assistant-generating-pulse">
+                        <div className="generating-header-row">
+                          <Loader2 size={14} className="spin-icon text-cyan" />
+                          <span className="generating-label">
+                            QUERYING PROFILE & SYNTHESIZING RESPONSE...
+                          </span>
+                        </div>
+                        <div className="pulse-skeleton-lines">
+                          <div className="pulse-line line-1" />
+                          <div className="pulse-line line-2" />
+                          <div className="pulse-line line-3" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div ref={bottomRef} className="scroll-anchor" />
+              </div>
+            )}
+          </div>
+
+          {/* Jump to bottom button when user scrolled up */}
+          {showScrollBottom && (
+            <button
+              type="button"
+              className="scroll-to-bottom-btn"
+              onClick={() => {
+                userScrolledUpRef.current = false;
+                setShowScrollBottom(false);
+                scrollToBottom("smooth");
+              }}
+              aria-label="Scroll to newest messages"
+            >
+              <ArrowDown size={14} />
+              <span>LATEST</span>
+            </button>
           )}
-          <form className="composer" onSubmit={handleSubmit}>
-            <textarea
-              ref={textareaRef}
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Ask about my projects, skills, experience..."
-              rows={1}
-              aria-label="Message"
-              disabled={loading}
-            />
-            <div className="composer-actions">
-              <span className="composer-hint">AI can make mistakes. Verify important details.</span>
-              <button className="send-button" type="submit" disabled={!draft.trim() || loading} aria-label="Send message">
-                <ArrowUp size={19} />
-              </button>
-            </div>
-          </form>
-          <div className="composer-caption">Press <kbd>Enter</kbd> to send · <kbd>Shift + Enter</kbd> for a new line</div>
-        </footer>
+        </div>
+
+        {/* Bottom Chat Composer Area */}
+        <ChatComposer
+          draft={draft}
+          setDraft={setDraft}
+          onSubmit={() => void sendMessage()}
+          loading={loading}
+          error={error}
+          onRetry={handleRetry}
+          inputRef={textareaRef}
+        />
       </main>
     </div>
   );
